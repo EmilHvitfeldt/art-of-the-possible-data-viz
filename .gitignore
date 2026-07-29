@@ -1,6 +1,9 @@
 /_site/
 /.quarto/
 *_files/
+# docs/ is the rendered site served by GitHub Pages, so it must be committed,
+# including the *_files/ sidecar folders the pages depend on.
+!/docs/**/*_files/
 .Rproj.user
 .Rhistory
 

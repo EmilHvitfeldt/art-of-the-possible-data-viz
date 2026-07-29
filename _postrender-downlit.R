@@ -8,12 +8,20 @@
 # Run automatically by `quarto render` (see post-render in _quarto.yml); it is
 # skipped silently when downlit is not installed so the site still builds.
 
+output_dir <- Sys.getenv("QUARTO_PROJECT_OUTPUT_DIR", "docs")
+
+# GitHub Pages runs Jekyll by default, which drops directories starting with an
+# underscore (site_libs is fine, but Quarto also emits _files-style assets). The
+# marker file turns Jekyll off so the output is served verbatim.
+nojekyll <- file.path(output_dir, ".nojekyll")
+if (!file.exists(nojekyll)) {
+  file.create(nojekyll)
+}
+
 if (!requireNamespace("downlit", quietly = TRUE)) {
   message("downlit not installed; skipping autolinking")
   quit(save = "no")
 }
-
-output_dir <- Sys.getenv("QUARTO_PROJECT_OUTPUT_DIR", "_site")
 
 # Packages used across the pages. Only the installed ones are handed to
 # downlit; the search order decides which package wins for ambiguous topics.
