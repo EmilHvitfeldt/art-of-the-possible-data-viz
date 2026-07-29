@@ -1,0 +1,20 @@
+---
+title: "Art of the Possible: Data Viz"
+---
+
+A showcase of data visualizations and interactive Shiny apps built in R.
+
+Use the navbar above to browse between examples. Each page holds a single
+visualization or app, all currently populated with placeholder data.
+
+## Visualizations
+
+- [Subway table (gt)](viz/subway-table.qmd)
+- [Sequence alignment (gt)](viz/msa-table.qmd)
+- [Ridgeline plot (ggplot2)](viz/ridgeline-plot.qmd)
+- [Waffle chart (ggplot2)](viz/waffle-storms.qmd)
+- [Choropleth map (sf)](viz/brussels-choropleth.qmd)
+
+## Shiny apps
+
+- [Commute Explorer](shiny/commute-explorer.qmd)

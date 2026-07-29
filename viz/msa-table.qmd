@@ -1,0 +1,721 @@
+---
+title: "Multiple Sequence Alignments with r-gt!"
+date: 2025-10-03
+author: Victor Yuan
+format:
+  html:
+    css: msa-styles.css
+    code-fold: true
+    anchor-sections: true
+    html-table-processing: none
+    toc: false
+    link-external-newwindow: true
+bibliography: references.bib
+from: markdown+emoji
+---
+
+::: {.callout-note appearance="simple"}
+## Credit
+This page reproduces work created by **Victor Yuan** for the 2025 Posit Table
+Contest: *Visualizing Conserved Regions Across Coronavirus Spike Proteins*
+([contest entry](https://github.com/rich-iannone/table-contest/discussions/10)
+· [source code](https://github.com/wvictor14/2025-posit-table-contest-gt-msa/)).
+All credit for the original analysis and design goes to the author.
+:::
+
+```{=html}
+<ul style="display: flex; list-style: none; padding: 0; gap: 20px; flex-wrap: wrap;">
+  <li><a href="https://linkedin.com/in/victor2wy/" target="_blank" rel="noopener"><i
+        class="bi bi-linkedin"></i>Linkedin</a></li>
+  <li><a
+      href="https://github.com/wvictor14/2025-posit-table-contest-gt-msa/blob/main/2025-posit-table-contest-gt-msa.qmd"
+      target="_blank" rel="noopener"><i class="bi bi-github"></i>Source Code</a></li>
+  <li><a href="https://victoryuan.com/" target="_blank" rel="noopener"><i class="bi bi-house-fill"></i>Website</a></li>
+</ul>
+```
+
+::: {.callout-tip title=":crown:"}
+This submission won "Best gt Table" from the [2025 Table Contest by Posit]("https://posit.co/blog/2025-table-contest-winners/)
+:::
+
+
+Multiple sequence alignment (MSA) is a computational technique to compare biological sequences, and identify regions of similarity and differences. This approach is used for identifying conserved functional domains, and understanding evolutionary relationships between related proteins.
+
+For the 2025 Posit Table contest I wanted to explore how MSAs can be effectively visualized using the r package [gt](https://gt.rstudio.com/). This has been something I have wanted to do for a long time, and I'm excited to share this exploration.
+
+The data we are working with is an MSA from [@Wang2021], where they identified a potential universally conserved "weak spot" in Coronavirus spike proteins to specific cross-reactive monoclonal antibodies. The spike protein was the primary target for developing the COVID-19 vaccines, which crucially saved millions of lives during in the fight against the pandemic.
+
+[Figure 5](https://www.nature.com/articles/s41467-021-21968-w/figures/5) from their study presents an MSA comparing spike proteins from several coronavirus species: SARS-CoV, SARS-CoV-2, MERS-CoV, and HCoV-OC43 (which causes the common cold). This visualization left an immediate impression on me. Despite there being large divergence between these species, the authors were able to identify a region with enough similarity to serve as target for broadly reactive antibodies.
+
+Let's explore how we can leverage `gt` to better understand the evolutionary relationships between coronavirus protein sequences!
+
+# Setup {.hidden .unlisted .unnumbered}
+
+This section is to prepare for generating the visualizations. We keep this hidden in the output.
+
+## Libraries
+
+```{r}
+#| message: false
+library(dplyr)
+library(here)
+library(tidyr)
+library(gt)
+library(stringr)
+library(readr)
+library(htmltools)
+library(glue)
+```
+
+## Data
+
+```{r}
+# palette
+palette_aa <- readr::read_csv(file.path("msa-data", "palette_amino_acids.csv"))
+
+# msa data
+FILE_MSA <- file.path("msa-data", "msa.csv")
+msa <- readr::read_csv(FILE_MSA)
+
+# long format
+msa_long <- msa |>
+  mutate(seq = as.character(seq) |> str_split("")) |>
+  tidyr::unnest(seq) |>
+  mutate(position = row_number(), .by = name)
+
+# table data
+tbl_data <- msa_long |>
+  pivot_wider(
+    id_cols = c(group, name, start),
+    names_from = "position",
+    values_from = "seq",
+    names_prefix = "pos_"
+  )
+```
+
+## Custom functions
+
+### Palette
+
+```{r}
+#' returns a coloring function based on chosen palette
+apply_color_to_aa <- function(
+  letter,
+  palette = c(
+    "Chemistry",
+    "Shapely",
+    "Zappo",
+    "Taylor",
+    "LETTER",
+    "Hydrophobicity"
+  )
+) {
+  target_palette <- palette_aa[, c("symbol", palette[1])] |> tibble::deframe()
+
+  color_fn <- function(letter) {
+    color <- target_palette[letter]
+    color[is.na(color)] <- "grey"
+    return(color)
+  }
+}
+```
+
+### Consensus
+
+```{r}
+#' This version sets the parent div to be 100% width and height
+#' @param bar_height a number between 0 and 1 that sets the height of the bar as a percentage of the total height of the container (the parent) div
+#' @param parent_div_height valid css unit for height of the parent div
+#' @param parent_div_width valid css unit for width of the parent div
+create_html_vertical_bar <- function(
+  bar_height = .5,
+  bar_color = "#4a6fa5",
+  parent_div_height = "50px",
+  parent_div_width = "100%"
+) {
+  .bar_height <- bar_height * 100
+  div(
+    style = glue(
+      "width:{parent_div_width};height:{parent_div_height};margin:0;padding:0;"
+    ),
+    div(
+      style = glue(
+        "height:{100-.bar_height}%;background:transparent;margin:0;padding:0;"
+      )
+    ),
+    div(
+      style = glue(
+        "height:{.bar_height}%;background:{bar_color};margin:0;padding:0;"
+      )
+    )
+  )
+}
+
+#' Get conensus frequency
+#'
+#' returns a 1-length named character vector of the most frequent amino acid, where:
+#'  - the value is the frequency
+#'  - the name is amino acid
+#'
+#' Does not handle ties (one of the ties will be returned)
+#' @param x a vector, ideally of interesting biological sequences
+get_consensus <- function(x) {
+  # drop gaps
+  frequency_tbl <- x |>
+    table() |>
+    sort(decreasing = TRUE)
+  consensus_freq <- (frequency_tbl / sum(frequency_tbl))[1]
+
+  return(consensus_freq)
+}
+
+#' gets the consensus of the vector x, and returns an html bar
+get_consensus_return_bar <- function(x) {
+  consensus_freq <- get_consensus(x)
+  create_html_vertical_bar(consensus_freq)
+}
+
+# usage:
+c("X", "X", "O") |>
+  get_consensus_return_bar() |>
+  browsable()
+c("X", "O") |>
+  get_consensus_return_bar() |>
+  browsable()
+```
+
+### Breaks
+
+`generate_breaks` takes the position columns and returns which ones to label. Uses `scales::breaks_width` to generate a break every 5 amino acids.
+
+```{r}
+#' Treats the column names as an axis, and generates breaks using `scales::breaks_width`
+#'
+#' @return a vector of column names at every `width` position
+generate_breaks <- function(tbl, width = 5) {
+  seq_cols <- tbl |> select(contains("pos"))
+  n_col <- seq_cols |> ncol()
+
+  breaks <- scales::breaks_width(width, 0)(c(1, n_col))
+
+  # handle case where breaks extend beyond data
+  breaks <- intersect(breaks, 1:n_col)
+
+  col_breaks <- colnames(seq_cols[, breaks])
+  return(col_breaks)
+}
+
+breaks <- generate_breaks(tbl_data)
+```
+
+### Highlight a region with a rectangle
+
+Annotates the sequences with a rectangle around a specific region. Only works on ungrouped `gt`.
+
+This function is not well generalized.
+
+```{r}
+#' Draws a rectangle around a section in a gt table
+#'
+#' @param .gt_tbl a gt table
+#' @param start start column
+#' @param end end column
+annotate_rectangle <- function(.gt_tbl, start, end) {
+  .gt_tbl |>
+    # add a rectangle to highlight region
+    tab_style(
+      style = cell_borders(sides = "left", weight = px(2)),
+      locations = cells_body(columns = {{ start }})
+    ) |>
+    tab_style(
+      style = cell_borders(sides = "right", weight = px(2)),
+      locations = cells_body(columns = {{ end }})
+    ) |>
+    tab_style(
+      style = cell_borders(sides = c("top"), weight = px(2)),
+      locations = cells_body(columns = {{ start }}:{{ end }}, rows = 1)
+    ) |>
+    # For the bottom border of the rectangle, need to target the top border of grand summary, if present
+    # if grand summary is not present, need to target the bottom of the cells_body
+    tab_style(
+      style = cell_borders(sides = c("top"), weight = px(2), style = "solid"),
+      locations = cells_grand_summary(columns = {{ start }}:{{ end }}, rows = 1)
+    )
+}
+
+```
+
+# Visualizing Conserved Regions Across Coronvirus Spike Proteins
+
+Click through the tabs below to explore each region of the coronavirus spike protein alignment in detail.
+
+::: {.panel-tabset .nav-pills}
+
+## Spike Protein
+
+This is my re-creation of the multiple sequence alignment of coronavirus spike proteins
+
+```{r}
+#| column: screen
+base_table <- tbl_data |>
+  gt(rowname_col = c("name"), groupname_col = "group") |>
+  # add consensus sequence
+  grand_summary_rows(
+    columns = contains("pos"),
+    fns = list(
+      Consensus ~ get_consensus_return_bar(.) |>
+        div(style = "width:100%;height:50px;") |>
+        as.character(),
+      Sequence ~ names(get_consensus(.)) |>
+        # change to double dash, otherwise fmt_markdown turns it into a list (ul)
+        stringr::str_replace("-", "--")
+    ),
+    fmt = list(
+      bar ~ fmt_markdown(.)
+    ),
+    missing = ""
+  ) |>
+  ## style consensus sequence
+  ### make sure that the consensus sequence elements are centered
+  tab_style(
+    style = cell_text(align = "center"),
+    locations = cells_grand_summary(columns = contains("pos_"))
+  ) |>
+  tab_style(
+    style = cell_borders(sides = "bottom", style = "hidden"),
+    locations = list(
+      cells_grand_summary(rows = 1),
+      cells_stub_grand_summary(rows = 1)
+    )
+  ) |>
+  # style the sequence elements: center elements, adjust size
+  tab_style(
+    style = cell_text(
+      size = "small",
+      align = "center",
+      indent = 0
+    ),
+    locations = list(
+      cells_body(columns = contains("pos_")),
+      cells_grand_summary(columns = contains("pos_"))
+    )
+  ) |>
+  cols_width(
+    1 ~ px(60),
+    name ~ px(50),
+    start ~ px(40),
+    everything() ~ px(13)
+  ) |>
+  cols_align("right", group:start) |>
+  # breaks
+  cols_label_with(
+    fn = ~ ifelse(. %in% breaks, ., "") |> str_remove("pos_"),
+    columns = contains("pos_")
+  ) |>
+  # remove borders from the table body
+  tab_style(
+    style = list(
+      cell_borders(
+        sides = "all",
+        weight = px(0)
+      )
+    ),
+    locations = list(
+      cells_body()
+    )
+  ) |>
+  # annotation regions in the alignment
+  tab_spanner(
+    columns = pos_1:pos_21,
+    label = "Stem helix"
+  ) |>
+  tab_spanner(
+    columns = pos_33:pos_80,
+    label = "HR2 region"
+  ) |>
+  tab_spanner(
+    columns = pos_91:pos_95,
+    label = "TM region"
+  ) |>
+  # epitope
+  cols_label(
+    pos_14 ~ "*",
+    pos_15 ~ "",
+    pos_16 ~ "*",
+    pos_17 ~ "*",
+    pos_19 ~ "!",
+  ) |>
+  # borders, style
+  tab_options(
+    row_group.as_column = TRUE,
+    table.font.size = 14,
+
+    # adjust padding in the cell body
+    data_row.padding.horizontal = px(2),
+    data_row.padding = px(2),
+
+    # adjust padding in the grand summary
+    # Noting that padding creates space between the bars (which have 100% width)
+    grand_summary_row.padding.horizontal = px(0),
+    grand_summary_row.padding = px(2),
+
+    # # remove borders
+    table.border.top.style = "hidden",
+    grand_summary_row.border.width = px(2)
+  )
+
+base_table |>
+  gt::data_color(
+    columns = contains("pos_"),
+    fn = apply_color_to_aa(palette = "Chemistry")
+  )
+```
+
+This 95-amino-acid section contains several functionally important regions: the epitope where antibodies bind, the stem helix, heptad repeat region 2 (HR2), and the transmembrane domain (TM).
+
+Click through the rest of these sections, as I use `gt` to help understand the amino acid composition of these regions in detail.
+
+**A note on the color palettes**
+
+MSAs commonly utilize colors to help readers better understand the variability in amino acid composition in biological sequences. Amino acids have all sorts of properties, such as hydrophobicity, size, and 3D structure. By coloring amino acids according to their biochemical properties, we can better understand the  the variation in amino acid composition.
+
+This color palette is from [ggmsa](https://yulab-smu.top/ggmsa/) that groups chemically-similar amino acids together:
+
+- Acidic amino acids glutamic (E) and aspartic acid (D) are [red]{style="background-color: #ff6d6d;"}
+- Nonpolar/hydrophobic amino acids proline (P), alanine (A), valine (V), methionine (M), leucine (L), isoleucine (I), and glycine (G) are [orange]{style="background-color: #f2be3c;"}
+- Basic amino acids lysine (K) and arginine (R) are [blue]{style="background-color: #769dcc;"}
+- Polar amino acids asparagine (N), threonine (T), cysteine (C), glutamine (Q), and serine (S) are [green]{style="background-color: #74ce98;"}
+- Aromatic amino acids phenylalanine (F), tyrosine (Y), and tryptophan (W) are [yellow]{style="background-color: #ffff66;"}
+
+In this analysis, I implemented a several alternative palettes and explore how effective they can be used to understand the amino acid composition of protein sequences.
+
+## Core Epitope
+
+The region where the antibodies bind
+
+```{r}
+#| column: screen
+base_table |>
+  gt::data_color(
+    columns = pos_11:pos_19,
+    fn = apply_color_to_aa(palette = "Chemistry")
+  ) |>
+  annotate_rectangle(start = pos_11, end = pos_18)
+```
+
+At the end of the Stem Helix lies the  **Epitope region**, which is a region where the antibodies 28D9/1.6C7 (the very creative names of the antibodies) bind to. This is where the magic happens. Referred to also as the "core epitope", asterisk indicate where key amino acid positions are for this interaction. If these positions are replaced with other amino acids, the antibodies can no longer bind effectively.
+
+How did the researchers determine this? By quite literally systematically changing each amino acid one at a time and measuring antibody binding. This *mutagensis experiment* importantly revealed that some amino acids in this region can change without affecting binding too much, but these 3 amino acids are critical.
+
+The exclamation point marks an amino acid adjacent to the epitope, which the authors refer to as a "conserved glycosylation sequon", or "NxS/T". This means this is an amino acid that sugar can attach to, and it follows the pattern of "the amino acid N, followed by any amino acid X, and then either an S or a T". Apparently this is a conserved pattern among coronavirus species. What's significant here is the authors suggest that this sugar molecule may be potentially important for the binding of these antibodies to this epitope.
+
+## Stem Helix
+
+This type of domain forms a 3-dimensional spiral like structure
+
+```{r}
+#| column: screen
+base_table |>
+  gt::data_color(
+    columns = pos_1:pos_21,
+    fn = apply_color_to_aa(palette = "Shapely")
+  ) |>
+  annotate_rectangle(start = pos_1, end = pos_21)
+```
+
+The **Stem Helix** is the orange part highlighted in this protein modeling figure.
+
+![](img/stem_helix.png){height=4in}
+A color palette from the bioinformatic software [**Rasmol**](https://openrasmol.org/doc/rasmol.html#shapelycolours) is shown here, which is based on Bob Fletterick's "Shapely Models".
+
+## HR2 region
+
+HR2 stands for "Heptad Repeat Region 2"
+
+```{r}
+#| column: screen
+base_table |>
+  gt::data_color(
+    columns = pos_33:pos_80,
+    fn = apply_color_to_aa(palette = "LETTER")
+  ) |>
+  annotate_rectangle(start = pos_33, end = pos_80)
+```
+
+The epitope occurs upstream of the **Heptad Repeat Region 2 (HR2)**. Why is it called "Heptad Repeat", because this is region where every 7 amino acids tends to be repeated.
+
+Can you spot the pattern? (If you can, do let me know because I can't)
+
+## Hydrophobocity
+
+We can adjust the palette to better identify the repeat pattern.
+
+```{r}
+#| column: screen
+base_table |>
+  gt::data_color(
+    columns = pos_33:pos_80,
+    fn = apply_color_to_aa(palette = "Hydrophobicity")
+  ) |>
+  annotate_rectangle(start = pos_33, end = pos_80)
+```
+
+Heptad repeat regions are typically identified via 3D structural modelling. Meaning, the repetitive-ness of these regions are difficult to be observed when viewing linear amino acid sequences. The exact amino acid length of each repeat is also imperfect, and not necessarily is the same amino acid repeated, but just one that is highly similar - usually a hydrophobic amino acid (e.g. leucine, valine, phenylalanine). These typically occur at position 1 and 4 of each seven amino acid unit.
+
+We can try to see this pattern using a color palette that highlights the relative hydrophobicity between amino acids.
+
+## TM region
+
+This region anchors the protein to the outer-most membrane of the virus.
+
+```{r}
+#| column: screen
+base_table |>
+  gt::data_color(
+    columns = pos_91:pos_95,
+    fn = apply_color_to_aa(palette = "Taylor")
+  ) |>
+  annotate_rectangle(start = pos_91, end = pos_95)
+```
+
+The final region is called the **Transmembrane (TM) region**, which is the part of the protein that spans across a phospholipid bilayer. It is an important structural component that anchors the spike protein to the viral envelope.
+
+Because of the lipid-rich environment of this layer, TM regions contain many hyrophobic and nonpolar residues - such as tryptophan (W), tyrosine (Y), valine (V), and leucine (L).
+
+This color palette `Taylor` is taken from the popular MSA program [Jalview](https://www.jalview.org/help/html/colourSchemes/index.html).
+
+:::
+
+If you enjoyed this article and want to use some of these functions yourself, check out the development of [gtseq](https://github.com/wvictor14/gtseq)
+
+## How it is built, step by step
+
+The tabs above vary the palette and the highlighted region, but they all share one
+`base_table`. This section takes that table apart: each tab adds one piece of the
+pipeline on top of the previous one, so you can see what every part contributes.
+The code for each step is shown below its output.
+
+::: {.panel-tabset}
+
+### 1. One column per position
+
+The alignment arrives as one row per sequence with the residues in a single
+string. Splitting it into characters, numbering the positions, then pivoting wide
+gives one column per alignment position (`pos_1` … `pos_95`), which is what lets
+`gt` treat residues as cells.
+
+```{r}
+#| label: mstep-1
+#| echo: false
+#| column: screen
+tbl_data[, 1:12]
+```
+
+```{r}
+#| ref.label: mstep-1
+#| eval: false
+#| echo: true
+#| code-fold: false
+```
+
+### 2. A bare gt table
+
+`gt()` with `rowname_col` and `groupname_col` puts the virus names in the stub
+and groups them by species. The 95 position columns are far too wide at their
+default size, which the next steps fix.
+
+```{r}
+#| label: mstep-2
+#| echo: false
+#| column: screen
+m2 <- tbl_data |>
+  gt(rowname_col = c("name"), groupname_col = "group")
+m2
+```
+
+```{r}
+#| ref.label: mstep-2
+#| eval: false
+#| echo: true
+#| code-fold: false
+```
+
+### 3. Cell sizing
+
+Squeezing every position column to 13px and centring the text is what makes the
+table read as an alignment: residues line up into vertical columns the eye can
+scan for conservation.
+
+```{r}
+#| label: mstep-3
+#| echo: false
+#| column: screen
+m3 <- m2 |>
+  tab_style(
+    style = cell_text(size = "small", align = "center", indent = 0),
+    locations = cells_body(columns = contains("pos_"))
+  ) |>
+  cols_width(
+    1 ~ px(60),
+    name ~ px(50),
+    start ~ px(40),
+    everything() ~ px(13)
+  ) |>
+  cols_align("right", group:start)
+m3
+```
+
+```{r}
+#| ref.label: mstep-3
+#| eval: false
+#| echo: true
+#| code-fold: false
+```
+
+### 4. Position axis
+
+The column labels are treated as an axis: `generate_breaks()` picks every fifth
+position and `cols_label_with()` blanks the rest, so the header behaves like axis
+ticks instead of 95 crowded numbers.
+
+```{r}
+#| label: mstep-4
+#| echo: false
+#| column: screen
+m4 <- m3 |>
+  cols_label_with(
+    fn = ~ ifelse(. %in% breaks, ., "") |> str_remove("pos_"),
+    columns = contains("pos_")
+  ) |>
+  tab_style(
+    style = list(cell_borders(sides = "all", weight = px(0))),
+    locations = list(cells_body())
+  )
+m4
+```
+
+```{r}
+#| ref.label: mstep-4
+#| eval: false
+#| echo: true
+#| code-fold: false
+```
+
+### 5. Consensus row
+
+`grand_summary_rows()` adds two summary rows across every position column: the
+most frequent residue, and a bar whose height is that residue's frequency. The
+bar is plain HTML from `create_html_vertical_bar()`, so conservation becomes a
+miniature profile plot along the bottom of the alignment.
+
+```{r}
+#| label: mstep-5
+#| echo: false
+#| column: screen
+m5 <- m4 |>
+  grand_summary_rows(
+    columns = contains("pos"),
+    fns = list(
+      Consensus ~ get_consensus_return_bar(.) |>
+        div(style = "width:100%;height:50px;") |>
+        as.character(),
+      Sequence ~ names(get_consensus(.)) |>
+        stringr::str_replace("-", "--")
+    ),
+    fmt = list(bar ~ fmt_markdown(.)),
+    missing = ""
+  ) |>
+  tab_style(
+    style = cell_text(align = "center"),
+    locations = cells_grand_summary(columns = contains("pos_"))
+  ) |>
+  tab_style(
+    style = cell_borders(sides = "bottom", style = "hidden"),
+    locations = list(
+      cells_grand_summary(rows = 1),
+      cells_stub_grand_summary(rows = 1)
+    )
+  ) |>
+  tab_style(
+    style = cell_text(size = "small", align = "center", indent = 0),
+    locations = cells_grand_summary(columns = contains("pos_"))
+  )
+m5
+```
+
+```{r}
+#| ref.label: mstep-5
+#| eval: false
+#| echo: true
+#| code-fold: false
+```
+
+### 6. Annotating the domains
+
+Spanners name the functional regions (stem helix, HR2, TM), and relabelling five
+individual columns marks the critical epitope positions with asterisks and the
+glycosylation sequon with an exclamation mark. `tab_options()` then tightens the
+padding, which the consensus bars need in order to sit flush against each other.
+This is `base_table`.
+
+```{r}
+#| label: mstep-6
+#| echo: false
+#| column: screen
+m6 <- m5 |>
+  tab_spanner(columns = pos_1:pos_21, label = "Stem helix") |>
+  tab_spanner(columns = pos_33:pos_80, label = "HR2 region") |>
+  tab_spanner(columns = pos_91:pos_95, label = "TM region") |>
+  cols_label(
+    pos_14 ~ "*",
+    pos_15 ~ "",
+    pos_16 ~ "*",
+    pos_17 ~ "*",
+    pos_19 ~ "!",
+  ) |>
+  tab_options(
+    row_group.as_column = TRUE,
+    table.font.size = 14,
+    data_row.padding.horizontal = px(2),
+    data_row.padding = px(2),
+    grand_summary_row.padding.horizontal = px(0),
+    grand_summary_row.padding = px(2),
+    table.border.top.style = "hidden",
+    grand_summary_row.border.width = px(2)
+  )
+m6
+```
+
+```{r}
+#| ref.label: mstep-6
+#| eval: false
+#| echo: true
+#| code-fold: false
+```
+
+### 7. Colour
+
+`data_color()` with `apply_color_to_aa()` maps each residue letter to its colour
+in the chosen scheme. Because it is the very last step, the same `base_table` can
+be recoloured by palette or restricted to a region, which is exactly what the
+tabs earlier on the page do.
+
+```{r}
+#| label: mstep-7
+#| echo: false
+#| column: screen
+m6 |>
+  gt::data_color(
+    columns = contains("pos_"),
+    fn = apply_color_to_aa(palette = "Chemistry")
+  )
+```
+
+```{r}
+#| ref.label: mstep-7
+#| eval: false
+#| echo: true
+#| code-fold: false
+```
+
+:::

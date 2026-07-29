@@ -1,0 +1,34 @@
+---
+title: "Commute Explorer"
+author: Stefan Schliebs
+format:
+  html:
+    page-layout: full
+    toc: false
+---
+
+::: {.callout-note appearance="simple"}
+## Credit
+This embeds the **Commute Explorer** app created by **Stefan Schliebs**, a winner
+of the [3rd Annual Posit (RStudio) Shiny Contest](https://posit.co/blog/winners-of-the-3rd-annual-shiny-contest#commute-explorer).
+It explores commuting patterns across New Zealand using 2018 Census data.
+Live app: [nz-stefan.shinyapps.io/commute-explorer-2](https://nz-stefan.shinyapps.io/commute-explorer-2/)
+· [source code](https://github.com/nz-stefan/commute-explorer-2).
+All credit for the app goes to the author.
+:::
+
+The app below is served live from the author's shinyapps.io deployment and
+embedded here. If it does not load, open it directly:
+[Commute Explorer ↗](https://nz-stefan.shinyapps.io/commute-explorer-2/){target="_blank"}.
+
+```{=html}
+<div style="position: relative; width: 100%; height: 85vh; min-height: 640px; border: 1px solid #ddd; border-radius: 6px; overflow: hidden;">
+  <iframe
+    src="https://nz-stefan.shinyapps.io/commute-explorer-2/"
+    title="Commute Explorer by Stefan Schliebs"
+    loading="lazy"
+    allowfullscreen
+    style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: 0;">
+  </iframe>
+</div>
+```

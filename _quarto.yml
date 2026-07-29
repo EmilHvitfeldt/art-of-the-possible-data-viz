@@ -1,0 +1,35 @@
+project:
+  type: website
+  output-dir: _site
+  render:
+    - "*.qmd"
+    - "viz/*.qmd"
+    - "shiny/*.qmd"
+  post-render:
+    - _postrender-downlit.R
+
+website:
+  title: "Art of the Possible: Data Viz"
+  navbar:
+    left:
+      - href: index.qmd
+        text: Home
+      - href: viz/ridgeline-plot.qmd
+        text: "Ridgeline plot (ggplot2)"
+      - href: viz/waffle-storms.qmd
+        text: "Waffle chart (ggplot2)"
+      - href: viz/subway-table.qmd
+        text: "Subway table (gt)"
+      - href: viz/msa-table.qmd
+        text: "Sequence alignment (gt)"
+      - href: viz/brussels-choropleth.qmd
+        text: "Choropleth map (sf)"
+      - href: shiny/commute-explorer.qmd
+        text: "Commute Explorer"
+
+format:
+  html:
+    theme: cosmo
+    toc: true
+    grid:
+      body-width: 1000px
